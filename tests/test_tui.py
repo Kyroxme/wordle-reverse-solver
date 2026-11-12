@@ -223,5 +223,33 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(len(text.splitlines()), 14)
 
 
+class TerminalFallbackTest(unittest.TestCase):
+    """Windows hat kein termios – das TUI muss das erklären, nicht crashen."""
+
+    def test_missing_termios_explains_docker(self) -> None:
+        import io
+        import sys as _sys
+        from unittest import mock
+
+        from wordle.tui import run
+
+        class FakeTTY(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+            def fileno(self) -> int:
+                return 0
+
+        app = App(Solver(), solution="crane")
+        fake = FakeTTY()
+        with mock.patch.object(_sys, "stdin", FakeTTY()), \
+                mock.patch.object(_sys, "stdout", fake), \
+                mock.patch.dict(_sys.modules, {"termios": None, "tty": None}):
+            code = run(app)
+        self.assertEqual(code, 2)
+        self.assertIn("termios", fake.getvalue())
+        self.assertIn("docker compose run", fake.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

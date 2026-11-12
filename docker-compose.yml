@@ -1,0 +1,17 @@
+# Reverse-Wordle-Solver im Container (Windows, macOS, Linux).
+#
+#   docker compose build
+#   docker compose run --rm solver                          # TUI
+#   docker compose run --rm solver -s crane -r GYXXG        # Batch
+#   docker compose run --rm solver --info
+#
+# Terminal ohne ANSI-Farben:
+#   docker compose run --rm -e NO_COLOR=1 solver
+# Falsche Fenstergröße im Container:
+#   docker compose run --rm -e COLUMNS=100 -e LINES=30 solver
+services:
+  solver:
+    build: .
+    image: wordle-reverse-solver:latest
+    stdin_open: true
+    tty: true

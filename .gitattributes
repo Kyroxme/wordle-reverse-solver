@@ -1,0 +1,2 @@
+# einheitliche Zeilenenden – Dockerfile und Python mögen kein CRLF
+* text=auto eol=lf

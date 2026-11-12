@@ -666,6 +666,13 @@ def run(app: App, color: bool | None = None) -> int:
         print("Das TUI braucht ein Terminal. Batch-Modus:")
         print('  python3 reverse_wordle.py --solution crane --rows GYXXG ...')
         return 2
+    try:
+        import termios  # noqa: F401
+    except ImportError:
+        print("Dieses TUI braucht termios – unter Windows gibt es das nicht.")
+        print("  Container:       docker compose run --rm solver")
+        print("  Batch nativ:     python reverse_wordle.py -s crane -r GYXXG")
+        return 2
     if color is None:
         color = "NO_COLOR" not in os.environ
     try:

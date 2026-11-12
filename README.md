@@ -36,6 +36,38 @@ python3 reverse_wordle.py            # TUI
 
 Nur Standardbibliothek, kein `pip install` nötig. Python 3.9+.
 
+## Windows und Docker
+
+Windows kennt kein `termios`, deshalb läuft das TUI dort nicht nativ. Im
+Container schon – dort ist es ein Linux, und Docker reicht das Terminal durch.
+Der Batch-Modus funktioniert auch ohne Docker direkt in PowerShell.
+
+```powershell
+docker compose build
+docker compose run --rm solver                    # TUI
+docker compose run --rm solver -s crane -r GYXXG  # Batch
+docker compose run --rm solver --info
+```
+
+Ohne Compose:
+
+```powershell
+docker build -t wordle-reverse-solver .
+docker run -it --rm wordle-reverse-solver
+```
+
+Das Image ist schlank (Alpine-Basis, keine Zusatzpakete, ~200 KB Code) und
+selbstständig: Wortlisten sind eingebaut, keine Volumes nötig.
+
+* PowerShell oder Windows Terminal benutzen – Git-Bash braucht zusätzlich
+  `winpty` vor dem `docker run`.
+* Zeichen sehen verwürfelt aus oder die Fenstergröße kommt nicht an:
+  `docker compose run --rm -e NO_COLOR=1 -e COLUMNS=100 -e LINES=30 solver`
+* Selbsttest im Container:
+  `docker compose run --rm --entrypoint python3 solver -m unittest discover -s tests`
+
+Nativ ohne Docker geht immer: `python reverse_wordle.py -s crane -r GYXXG`.
+
 ## TUI-Bedienung
 
 | Taste | Wirkung |
@@ -121,7 +153,9 @@ wordle/tui.py                Zustand, Tastenlogik, Rendering, Terminal-I/O
 wordle/cli.py                Batch-Modus, JSON, stdin
 data/                        offizielle Wortlisten
 tools/fetch_official_lists.py  Listen aktualisieren
-tests/                       50 Tests (core, tui, cli, pty)
+tests/                       52 Tests (core, tui, cli, pty)
+Dockerfile                   Alpine-Image für Windows/macOS
+docker-compose.yml           Build und Start mit einem Befehl
 ```
 
 ## Tests
@@ -133,8 +167,9 @@ python3 -m unittest discover -s tests -v
 Geprüft wird unter anderem: Wordle-Feedback gegen eine unabhängige
 Referenzimplementierung (400 Zufallspaare), Kandidatenmengen gegen echte
 Brute-Force-Ergebnisse (40 Zufallspaare), Duplikat-Regeln, Teil-Muster,
-Emoji-Parsing, Cache, TUI-Tasten und -Layout (auch bei 30 Spalten) sowie ein
-Rauchtest, der das echte TUI in einem Pseudo-Terminal bedient.
+Emoji-Parsing, Cache, TUI-Tasten und -Layout (auch bei 30 Spalten), ein
+Rauchtest, der das echte TUI in einem Pseudo-Terminal bedient, und der
+Windows-Fall (fehlendes `termios`).
 
 ## Grenzen
 
@@ -143,4 +178,4 @@ Rauchtest, der das echte TUI in einem Pseudo-Terminal bedient.
 - Bei sehr schwachen Mustern (viele graue Zellen) bleiben Hunderte Kandidaten
   übrig – das ist bei einer reinen Farbzeile nicht anders möglich.
 - Die TUI braucht ein echtes Terminal; ohne TTY erklärt das Programm den
-  Batch-Modus.
+  Batch-Modus, unter Windows den Weg über Docker.

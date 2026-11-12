@@ -83,6 +83,16 @@ class CliTest(unittest.TestCase):
         data = json.loads(proc.stdout)
         self.assertEqual([r["pattern"] for r in data["rows"]], ["GYXXG", "YXXXX"])
 
+    def test_batch_mode_needs_no_termios(self) -> None:
+        """Windows-Simulation: Batch-Ausgabe darf termios nie anfassen."""
+        import sys as _sys
+        from unittest import mock
+
+        with mock.patch.dict(_sys.modules, {"termios": None, "tty": None}):
+            code, out = self.run_main(["-s", "crane", "-r", "GYXXG"])
+        self.assertEqual(code, 0)
+        self.assertIn("CABLE", out)
+
     def test_tui_without_terminal_explains_itself(self) -> None:
         proc = subprocess.run(
             [sys.executable, "reverse_wordle.py"], input="", capture_output=True,
