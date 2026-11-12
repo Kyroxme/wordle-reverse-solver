@@ -135,6 +135,7 @@ class App:
     target: str | None = None       # aktive Eingabezeile
     buffer: str = ""
     start_row: int = 0              # ab welcher Zeile ein Muster landet
+    debug: bool = False             # Tasten-Diagnose in der Statuszeile
 
     def __post_init__(self) -> None:
         self.recompute()
@@ -262,22 +263,26 @@ class App:
             self.scroll = 0
             self.recompute()
             return True
-        if key in ("TAB", "DOWN", "ENTER"):
+        if key in ("TAB", "DOWN", "ENTER", "j"):
             self._cycle_focus(1)
             return True
-        if key in ("STAB", "UP"):
+        if key in ("STAB", "UP", "k"):
             self._cycle_focus(-1)
             return True
-        if key == "LEFT":
+        if key in ("LEFT", "h"):
             self.col = max(0, self.col - 1)
             return True
-        if key == "RIGHT":
+        if key in ("RIGHT", "l"):
             self.col = min(CELLS - 1, self.col + 1)
             return True
-        if key == "BACKSPACE":
+        if key in ("BACKSPACE", "u"):
             self._backspace()
             return True
-        if key == "DELETE":
+        if key == "D":
+            self.debug = not self.debug
+            self.status = "Tasten-Diagnose an" if self.debug else "Tasten-Diagnose aus"
+            return True
+        if key in ("DELETE", "c"):
             if self.focus >= 0:
                 self.rows[self.focus] = UNKNOWN * CELLS
                 self.col = 0
@@ -400,11 +405,19 @@ HELP_LINES: tuple[tuple[str, str], ...] = (
     ("  ← →                    Zelle wählen", ""),
     ("  ↑ ↓ / Tab / Enter      Zeile bzw. Lösung wechseln", ""),
     ("  ⌫                      Zelle löschen, Entf leert die ganze Zeile", ""),
+    ("  u / c                  Zelle löschen / Zeile leeren", ""),
+    ("  h / l / j / k          Zeile/Zelle bewegen ohne Pfeiltasten", ""),
     ("", ""),
     ("Anzeige", "h"),
     ("  a                      Wortliste: offizielle Lösungen ↔ alle Tipps", ""),
     ("  , .  oder Bild↑/↓      Kandidatenliste blättern", ""),
     ("  R                      alles zurücksetzen, ? Hilfe, q beendet", ""),
+    ("", ""),
+    ("Wenn Tasten nicht ankommen", "h"),
+    ("  Pfeiltasten sind ESC-Sequenzen (ESC [ D). Das TUI liest sie byteweise", ""),
+    ("  und wartet 120 ms auf den Rest – auch über SSH oder im Container.", ""),
+    ("  D                      Tasten-Diagnose: zeigt die Rohbytes der Taste", ""),
+    ("  h/l/j/k und u/c funktionieren auch ohne Sondertasten.", ""),
     ("", ""),
     ("Warum bleiben Kandidaten übrig?", "h"),
     ("  Farben verraten sicher nur grüne Buchstaben. Gelb und Grau sagen", ""),
@@ -583,12 +596,7 @@ def _help_screen(width: int, height: int, color: bool) -> list[str]:
 # Terminal-I/O
 # --------------------------------------------------------------------------
 
-_ESCAPES = {
-    "[A": "UP", "[B": "DOWN", "[C": "RIGHT", "[D": "LEFT", "[Z": "STAB",
-    "[5~": "PGUP", "[6~": "PGDN", "[3~": "DELETE", "[H": "HOME", "[F": "END",
-    "OA": "UP", "OB": "DOWN", "OC": "RIGHT", "OD": "LEFT",
-}
-
+#: Steuerzeichen (nach UTF-8-Dekodierung) -> Tastenname
 _CONTROL = {
     "\x03": "CTRL_C",
     "\x04": "CTRL_D",
@@ -597,41 +605,152 @@ _CONTROL = {
     "\n": "ENTER",
     "\x7f": "BACKSPACE",
     "\x08": "BACKSPACE",
+    "\x00": "UNKNOWN",
+}
+
+#: Endbuchstabe einer CSI/SS3-Sequenz -> Taste
+_FINAL_KEYS = {
+    "A": "UP", "B": "DOWN", "C": "RIGHT", "D": "LEFT",
+    "H": "HOME", "F": "END", "Z": "STAB",
+}
+
+#: ESC [ <n> ~ -> Taste
+_TILDE_KEYS = {
+    "1": "HOME", "2": "INSERT", "3": "DELETE", "4": "END",
+    "5": "PGUP", "6": "PGDN", "7": "HOME", "8": "END",
 }
 
 
-def read_key(fd: int) -> str:
-    """Liest eine Taste; Escape-Sequenzen werden zu Namen."""
-    ch = sys.stdin.read(1)
-    if ch == "":
-        return "CTRL_D"
-    if ch != "\x1b":
-        return _CONTROL.get(ch, ch)
-    buf = ""
-    while len(buf) < 3:
-        ready, _, _ = select.select([fd], [], [], 0.02)
-        if not ready:
-            break
-        buf += sys.stdin.read(1)
-        if buf in _ESCAPES:
-            return _ESCAPES[buf]
-    if not buf:
+def _sequence_complete(seq: str) -> bool:
+    """Ist die ESC-Sequenz nach ``seq`` zu Ende?"""
+    if not seq:
+        return False
+    if seq[0] not in "[O":
+        return True
+    if len(seq) < 2:            # nur das Präfix ("[" oder "O") ist noch kein Ende
+        return False
+    return seq[-1].isalpha() or seq[-1] == "~"
+
+
+def _map_sequence(seq: str) -> str:
+    """ESC-Sequenz (ohne führendes ESC) -> Tastenname."""
+    if not seq:
         return "ESC"
-    return _ESCAPES.get(buf, "ESC")
+    if seq[0] not in "[O" or len(seq) < 2:
+        return "UNKNOWN"
+    body = seq[1:]
+    final = body[-1]
+    if final == "~":
+        return _TILDE_KEYS.get(body.split(";")[0].rstrip("~"), "UNKNOWN")
+    return _FINAL_KEYS.get(final, "UNKNOWN")
 
 
-def pending_input(fd: int, timeout: float = 0.05) -> str:
-    """Zeichen, die beim Einfügen schon im Puffer liegen (sonst '')."""
-    ready, _, _ = select.select([fd], [], [], timeout)
-    if not ready:
-        return ""
-    data = ""
-    while True:
-        ready, _, _ = select.select([fd], [], [], 0.0)
-        if not ready:
-            break
-        data += sys.stdin.read(1)
-    return data
+class KeyReader:
+    """Liest Tasten byteweise direkt vom Terminal.
+
+    Wichtig: ``sys.stdin.read()`` zieht weitere Bytes in einen Userspace-Puffer,
+    ein ``select()`` auf dem Filedescriptor sieht sie danach nicht mehr. Genau
+    daran scheiterten Pfeiltasten – sie kamen als einzelnes ESC an, der Rest
+    ("[D") wurde als Text verschluckt. Darum hier ``os.read()`` plus eigener
+    UTF-8-Dekodierung.
+    """
+
+    #: Zeit, die der Rest einer ESC-Sequenz höchstens braucht (Container: träge)
+    ESC_TIMEOUT = 0.12
+    MAX_SEQUENCE = 8
+
+    def __init__(self, fd: int) -> None:
+        self.fd = fd
+        self.last_raw = b""
+        self._chars: list[str] = []
+        self._tail = b""          # angebrochene UTF-8-Sequenz vom letzten Lesen
+
+    # -- Bytes ----------------------------------------------------------
+
+    def _read_bytes(self, timeout: float | None) -> bytes:
+        """Blockierend (timeout=None) oder mit Wartezeit genau ein Paket lesen."""
+        if timeout is not None:
+            try:
+                ready, _, _ = select.select([self.fd], [], [], timeout)
+            except OSError:  # pragma: no cover - fd geschlossen
+                return b""
+            if not ready:
+                return b""
+        while True:
+            try:
+                return os.read(self.fd, 64)
+            except InterruptedError:  # pragma: no cover - Signal
+                continue
+            except OSError:
+                return b""
+
+    def _decode(self, data: bytes) -> str:
+        """UTF-8 dekodieren; ein unvollständiges Zeichen bleibt im Puffer."""
+        buf = self._tail + data
+        self._tail = b""
+        try:
+            return buf.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            cut = exc.start
+            if 0 < len(buf) - cut <= 3:
+                try:
+                    head = buf[:cut].decode("utf-8")
+                except UnicodeDecodeError:
+                    return buf.decode("utf-8", "replace")
+                self._tail = buf[cut:]
+                return head
+            return buf.decode("utf-8", "replace")
+
+    def _next_char(self, timeout: float | None) -> str | None:
+        if self._chars:
+            return self._chars.pop(0)
+        data = self._read_bytes(timeout)
+        if not data:
+            return None
+        self._chars.extend(self._decode(data))
+        if not self._chars:      # nur ein angebrochenes Zeichen → weiterlesen
+            return self._next_char(None)
+        return self._chars.pop(0)
+
+    # -- öffentlich -----------------------------------------------------
+
+    def read_key(self) -> str:
+        """Nächste Taste als Name ("UP", "BACKSPACE") oder als Zeichen."""
+        ch = self._next_char(None)
+        if not ch:
+            return "CTRL_D"
+        if ch == "\x1b":
+            return self._read_escape()
+        self.last_raw = ch.encode("utf-8", "replace")
+        return _CONTROL.get(ch, ch)
+
+    def _read_escape(self) -> str:
+        seq = ""
+        while len(seq) < self.MAX_SEQUENCE:
+            ch = self._next_char(self.ESC_TIMEOUT if not seq else 0.05)
+            if ch is None:
+                break
+            seq += ch
+            if _sequence_complete(seq):
+                break
+        self.last_raw = ("\x1b" + seq).encode("utf-8", "replace")
+        return _map_sequence(seq)
+
+    def read_available(self, timeout: float = 0.05) -> str:
+        """Alles, was gerade noch im Puffer liegt (z. B. ein eingefügtes Grid)."""
+        text = "".join(self._chars)
+        self._chars.clear()
+        if self._tail:
+            text += self._decode(b"")
+        data = self._read_bytes(timeout)
+        if data:
+            text += self._decode(data)
+        while True:
+            data = self._read_bytes(0.0)
+            if not data:
+                break
+            text += self._decode(data)
+        return text
 
 
 class _RawTerminal:
@@ -677,20 +796,23 @@ def run(app: App, color: bool | None = None) -> int:
         color = "NO_COLOR" not in os.environ
     try:
         with _RawTerminal():
+            reader = KeyReader(sys.stdin.fileno())
             while True:
                 size = shutil.get_terminal_size((80, 30))
                 sys.stdout.write(
                     "\x1b[H\x1b[J" + render(app, size.columns, size.lines, color) + "\n"
                 )
                 sys.stdout.flush()
-                key = read_key(sys.stdin.fileno())
+                key = reader.read_key()
                 # Beim Einfügen eines ganzen Grids landet der Rest im Puffer.
                 if app.typing and key == "ENTER":
-                    more = pending_input(sys.stdin.fileno())
+                    more = reader.read_available(0.05)
                     if more.strip():
                         app.append_text(more)
                         continue
                 if not app.handle(key):
                     return 0
+                if app.debug:
+                    app.status = f"Taste {key}: {reader.last_raw!r}"
     except KeyboardInterrupt:
         return 0

@@ -80,7 +80,10 @@ Nativ ohne Docker geht immer: `python reverse_wordle.py -s crane -r GYXXG`.
 | Leertaste | Zelle leeren |
 | `←` `→` | Zelle wählen |
 | `↑` `↓` / Tab / Enter | Zeile bzw. Lösung wechseln |
+| `h` `l` `j` `k` | dasselbe ohne Pfeiltasten |
 | `⌫` / Entf | Zelle löschen / ganze Zeile leeren |
+| `u` / `c` | Zelle löschen / Zeile leeren (ohne Sondertasten) |
+| `D` | Tasten-Diagnose: zeigt die Rohbytes der letzten Taste |
 | `a` | Wortliste umschalten: offizielle Lösungen ↔ alle erlaubten Tipps |
 | `,` `.` / Bild↑ Bild↓ | Kandidatenliste blättern |
 | `R` | alles zurücksetzen |
@@ -88,6 +91,19 @@ Nativ ohne Docker geht immer: `python reverse_wordle.py -s crane -r GYXXG`.
 
 Die Farbmatrix muss nicht aus Buchstaben bestehen: `m` nimmt auch eingefügte
 Wordle-Emojis an (`🟩🟨⬛⬛🟩`), mehrere Zeilen auf einmal inklusive.
+
+### Tasten und Terminals
+
+Pfeiltasten und Backspace sind Sondertasten: Pfeile kommen als `ESC [ D` an,
+Backspace als `0x7F` oder `0x08`. Das TUI liest die Bytes direkt vom Terminal
+(`os.read`) und wartet bis zu 120 ms auf den Rest einer ESC-Sequenz. Über
+`sys.stdin.read()` ginge das nicht: Python puffert die Folgebytes im Userspace,
+ein `select()` auf dem Filedescriptor sieht sie danach nicht mehr — genau
+daran scheiterten Pfeiltasten.
+
+Deshalb funktionieren die Tasten auch über SSH, tmux und im Container, und für
+alle Fälle gibt es die Alternative ohne Sondertasten (`h` `l` `j` `k`, `u`, `c`).
+Kommt eine Taste trotzdem nicht an: `D` zeigt ihre Rohbytes in der Statuszeile.
 
 ## Batch-Modus
 
@@ -153,7 +169,7 @@ wordle/tui.py                Zustand, Tastenlogik, Rendering, Terminal-I/O
 wordle/cli.py                Batch-Modus, JSON, stdin
 data/                        offizielle Wortlisten
 tools/fetch_official_lists.py  Listen aktualisieren
-tests/                       52 Tests (core, tui, cli, pty)
+tests/                       65 Tests (core, tui, input, cli, pty)
 Dockerfile                   Alpine-Image für Windows/macOS
 docker-compose.yml           Build und Start mit einem Befehl
 ```
@@ -167,9 +183,10 @@ python3 -m unittest discover -s tests -v
 Geprüft wird unter anderem: Wordle-Feedback gegen eine unabhängige
 Referenzimplementierung (400 Zufallspaare), Kandidatenmengen gegen echte
 Brute-Force-Ergebnisse (40 Zufallspaare), Duplikat-Regeln, Teil-Muster,
-Emoji-Parsing, Cache, TUI-Tasten und -Layout (auch bei 30 Spalten), ein
-Rauchtest, der das echte TUI in einem Pseudo-Terminal bedient, und der
-Windows-Fall (fehlendes `termios`).
+Emoji-Parsing, Cache, TUI-Tasten und -Layout (auch bei 30 Spalten), die
+Eingabeschicht (Pfeil-, Bild-, Backspace- und Steuertasten, UTF-8 über mehrere
+Lesepakete), ein Rauchtest, der das echte TUI im Pseudo-Terminal mit
+Pfeiltasten und Backspace bedient, und der Windows-Fall (fehlendes `termios`).
 
 ## Grenzen
 

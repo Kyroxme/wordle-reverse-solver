@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import select
 import subprocess
 import sys
@@ -11,6 +12,15 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def row_marks(text: str, label: str = "▸1") -> list[str]:
+    """Zellinhalte der zuletzt gezeichneten Zeile (Klartext-Modus)."""
+    lines = [line for line in text.splitlines() if label in line]
+    if not lines:
+        return []
+    line = lines[-1].replace(">", "[").replace("<", "]")
+    return re.findall(r"\[([GYX ])\]", line)
 
 try:
     import fcntl
@@ -30,7 +40,7 @@ class PtySmokeTest(unittest.TestCase):
         env = dict(os.environ, TERM="xterm-256color")
         env.pop("NO_COLOR", None)
         proc = subprocess.Popen(
-            [sys.executable, "reverse_wordle.py"],
+            [sys.executable, "reverse_wordle.py", "--no-color"],
             stdin=slave, stdout=slave, stderr=subprocess.PIPE,
             cwd=ROOT, env=env, close_fds=True,
         )
@@ -68,6 +78,18 @@ class PtySmokeTest(unittest.TestCase):
             send("gyxxg", 0.6)
             self.assertIn("CAUSE", out)
             self.assertIn("Kandidaten", out)
+            self.assertEqual(row_marks(out), list("GYXXG"))
+
+            # Pfeiltasten: ESC-Sequenzen müssen als Taste ankommen …
+            send("\x1b[D", 0.3)
+            # … und Backspace leert die Zelle darunter.
+            send("\x7f", 0.4)
+            self.assertEqual(row_marks(out), ["G", "Y", "X", " ", "G"])
+
+            # Ohne Sondertasten: h/l bewegen, g setzt wieder Grün.
+            send("g", 0.3)
+            self.assertEqual(row_marks(out), list("GYXGG"))
+
             send("?", 0.4)
             self.assertIn("Hilfe", out)
             send("q", 0.3)
